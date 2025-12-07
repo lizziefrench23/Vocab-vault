@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocab Vault - GCSE Synonym Match</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Light blue-gray background */
+        }
+        .game-card {
+            background-color: #ffffff;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .option-button {
+            transition: all 0.15s ease-in-out;
+            transform: translateY(0);
+            text-align: left; /* Align text left for definitions */
+            height: auto; /* Allow buttons to grow for definitions */
+            padding: 1rem;
+        }
+        .option-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(45, 108, 178, 0.3); /* Subtle blue shadow on hover */
+        }
+        .correct-answer {
+            background-color: #10b981 !important; /* Emerald 500 */
+            color: white !important;
+        }
+        .incorrect-answer {
+            background-color: #ef4444 !important; /* Red 500 */
+            color: white !important;
+        }
+        .disabled-button {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div id="game-container" class="w-full max-w-lg mx-auto p-6 rounded-xl game-card">
+        <h1 class="text-3xl font-extrabold text-center text-blue-800 mb-2">Vocab Vault</h1>
+        <p class="text-center text-sm text-gray-600 mb-6">Find the ambitious synonym, then its definition.</p>
+
+        <div class="flex justify-between items-center mb-6 text-lg font-semibold">
+            <div class="text-gray-700">Score: <span id="score-display" class="text-blue-600">0</span></div>
+            <div class="text-gray-700">Lives: <span id="lives-display" class="text-red-500">3</span></div>
+            <div class="text-gray-700 text-sm">High Score: <span id="high-score-display" class="text-green-600">...</span></div>
+        </div>
+
+        <!-- Main Question Area -->
+        <div class="bg-blue-50 p-6 rounded-lg mb-6 text-center shadow-inner border-b-4 border-blue-200">
+            <p id="prompt-stage-1" class="text-xl font-medium text-gray-700 mb-2">Simple Word:</p>
+            <p id="prompt-stage-2" class="text-xl font-medium text-gray-700 mb-2 hidden">Definition of:</p>
+            <h2 id="current-word-display" class="text-5xl font-extrabold text-blue-900 uppercase tracking-wider">Loading...</h2>
+        </div>
+
+        <!-- Options Grid -->
+        <div id="options-grid" class="grid grid-cols-1 gap-4 mb-6">
+            <!-- Buttons will be inserted here -->
+        </div>
+
+        <!-- Feedback and Game Over Message -->
+        <div id="message-box" class="min-h-[50px] text-center p-2 rounded-lg font-bold text-lg mb-4 hidden"></div>
+
+        <!-- Loading Indicator -->
+        <div id="loading-indicator" class="text-center text-gray-500 p-8">
+            <svg class="animate-spin h-5 w-5 text-blue-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p>Initializing Game & Checking Configuration...</p>
+        </div>
+        
+        <!-- Restart Button (Hidden initially) -->
+        <button id="restart-button" onclick="startGame()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg hidden option-button">
+            Restart Game
+        </button>
+
+         <p id="user-id-display" class="mt-4 text-xs text-center text-gray-400">User ID: N/A</p>
+
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, collection, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // IMPORTANT: Global Variables MUST BE used
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- GAME DATA AND STATE (Consolidated Global State) ---
+        let db = null;
+        let auth = null;
+        let userId = null;
+        let score = 0;
+        let lives = 3;
+        let gameActive = true; 
+        let currentHighScore = 0;
+        let currentStage = 'synonym'; // 'synonym' or 'definition'
+        let currentQuestion = null;
+        let availableWords = null; // Will be initialized in startGame
+
+        // Expose functions and variables to the global scope for event handlers
+        window.startGame = startGame;
+        window.checkAnswer = checkAnswer; 
+
+        // Utility function for shuffling an array
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                // Correct array destructuring assignment syntax
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+        
+        // Vocabulary list with 40 entries and balanced definitions
+        const vocabulary = [
+            { 
+                simple: "GOOD", 
+                ambitious: "Excellent", 
+                synonymDistractors: ["Weak", "Plain", "Fair"],
+                definition: {
+                    correct: "Extremely good in quality, often the best standard possible; outstanding.",
+                    distractors: [
+                        "Lacking skill or ability, or being of an inferior or disappointing quality.",
+                        "Perfectly simple, or easy to understand without any difficulty.",
+                        "Sufficient or adequate, but not particularly remarkable or great."
+                    ]
+                }
+            },
+            { 
+                simple: "BAD", 
+                ambitious: "Terrible", 
+                synonymDistractors: ["Nice", "Simple", "Small"],
+                definition: {
+                    correct: "Extremely unpleasant or dreadful; of very poor quality or skill.",
+                    distractors: [
+                        "Pleasant or agreeable, or behaving in a kind, helpful manner.",
+                        "Easy to understand, or having very few parts or complicated features.",
+                        "Below average size, or having a limited quantity or scope."
+                    ]
+                }
+            },
+            { 
+                simple: "HAPPY", 
+                ambitious: "Elated", 
+                synonymDistractors: ["Angry", "Tired", "Boring"],
+                definition: {
+                    correct: "Feeling or expressing intense joy or pride; extremely happy and thrilled.",
+                    distractors: [
+                        "Feeling or showing strong displeasure, hostility, or antagonism.",
+                        "Lacking energy due to overexertion, or needing substantial rest.",
+                        "Causing no interest or excitement; dull, tedious, or repetitive."
+                    ]
+                }
+            },
+            { 
+                simple: "SAD", 
+                ambitious: "Wistful", 
+                synonymDistractors: ["Funny", "Brave", "Quick"],
+                definition: {
+                    correct: "Showing a feeling of sad longing or gentle regret for something lost.",
+                    distractors: [
+                        "Causing amusement or laughter, or designed to be entertaining.",
+                        "Having or showing physical or moral courage; ready to face danger.",
+                        "Moving or acting with high speed or velocity; done without delay."
+                    ]
+                }
+            },
+            { 
+                simple: "BIG", 
+                ambitious: "Substantial", 
+                synonymDistractors: ["Tiny", "Soft", "Slow"],
+                definition: {
+                    correct: "Large in size, degree, or amount; considerable, important, or sturdy.",
+                    distractors: [
+                        "Extremely small; much smaller than usual, or insignificant in volume.",
+                        "Easily yielding to pressure, or having a gentle, smooth texture.",
+                        "Moving with little speed, or taking a long time to happen or finish."
+                    ]
+                }
+            },
+            { 
+                simple: "SMALL", 
+                ambitious: "Miniature", 
+                synonymDistractors: ["Giant", "Heavy", "Loud"],
+                definition: {
+                    correct: "A copy or model of something on a greatly reduced, smaller scale.",
+                    distractors: [
+                        "Extremely large or huge, or far exceeding the average size or amount.",
+                        "Having great weight, or difficult to lift or move due to density.",
+                        "Producing a great volume of sound; highly audible or noisy."
+                    ]
+                }
+            },
+            { 
+                simple: "SAY", 
+                ambitious: "Articulate", 
+                synonymDistractors: ["Whisper", "Think", "Scream"],
+                definition: {
+                    correct: "Expressing an idea or feeling clearly, fluently, and coherently in words.",
+                    distractors: [
+                        "To speak very quietly, using only the breath, often secretly.",
+                        "To use one's mind to consider or reason about something carefully.",
+                        "To cry out loudly, typically in a sudden, sharp, and high-pitched manner."
+                    ]
+                }
+            },
+            { 
+                simple: "WALK", 
+                ambitious: "Amble", 
+                synonymDistractors: ["Run", "Stop", "Jump"],
+                definition: {
+                    correct: "To walk or move in a slow, relaxed, and leisurely, easygoing way.",
+                    distractors: [
+                        "To move quickly on foot, faster than walking, for exercise or hurry.",
+                        "To cease motion or to come to an end; to bring an activity to a close.",
+                        "To push oneself off the ground into the air by a muscular effort."
+                    ]
+                }
+            },
+            { 
+                simple: "LOOK", 
+                ambitious: "Observe", 
+                synonymDistractors: ["Ignore", "Sleep", "Touch"],
+                definition: {
+                    correct: "To watch someone or something carefully and attentively, often for details.",
+                    distractors: [
+                        "To refuse to pay attention to, or deliberately disregard, something.",
+                        "To be in a state of rest, with eyes closed, and unconscious.",
+                        "To bring one's hand or another part of the body into contact with something."
+                    ]
+                }
+            },
+            { 
+                simple: "USE", 
+                ambitious: "Utilise", 
+                synonymDistractors: ["Waste", "Break", "Hide"],
+                definition: {
+                    correct: "To use something in an effective, practical, or efficient way; employ.",
+                    distractors: [
+                        "To use or spend something carelessly, inefficiently, or without need.",
+                        "To separate something into two or more pieces through force or impact.",
+                        "To put something in a place where it cannot be easily seen or found."
+                    ]
+                },
+            },
+            { 
+                simple: "IMPORTANT", 
+                ambitious: "Crucial", 
+                synonymDistractors: ["Minor", "Silly", "Easy"],
+                definition: {
+                    correct: "Extremely important or necessary; vital to the successful outcome.",
+                    distractors: [
+                        "Small in extent, size, or importance; not serious or major.",
+                        "Lacking seriousness or sense; foolish, trivial, or thoughtless.",
+                        "Requiring little effort; achieved without difficulty or trouble."
+                    ]
+                }
+            },
+            { 
+                simple: "SHOW", 
+                ambitious: "Illustrate", 
+                synonymDistractors: ["Confuse", "Obscure", "Suggest"],
+                definition: {
+                    correct: "To explain or clarify something using visual examples, pictures, or stories.",
+                    distractors: [
+                        "To make something unclear, complicated, or difficult to understand.",
+                        "To keep something from being seen or known; to put it out of sight.",
+                        "To mention an idea or theory indirectly, without full explanation."
+                    ]
+                }
+            },
+            { 
+                simple: "GET", 
+                ambitious: "Acquire", 
+                synonymDistractors: ["Surrender", "Donate", "Dismiss"],
+                definition: {
+                    correct: "To obtain, buy, or gain possession of something for oneself.",
+                    distractors: [
+                        "To cease resistance or give up control over something.",
+                        "To give money or goods to a charity, institution, or person in need.",
+                        "To order someone to leave or reject a suggestion as unimportant."
+                    ]
+                }
+            },
+            { 
+                simple: "THINK", 
+                ambitious: "Ponder", 
+                synonymDistractors: ["Rush", "Forget", "Guess"],
+                definition: {
+                    correct: "To consider something deeply and carefully over a significant period.",
+                    distractors: [
+                        "To move or act with excessive speed and insufficient planning or thought.",
+                        "To fail to recall or remember information or a past event.",
+                        "To form an opinion or conclusion without sufficient proof or evidence."
+                    ]
+                }
+            },
+            { 
+                simple: "LOOK AT", 
+                ambitious: "Scrutinize", 
+                synonymDistractors: ["Glance", "Ignore", "Estimate"],
+                definition: {
+                    correct: "To examine or inspect something closely and thoroughly, paying careful attention.",
+                    distractors: [
+                        "To take a quick, brief look at something or someone.",
+                        "To deliberately refrain from noticing or paying attention to.",
+                        "To form a rough judgment or calculation of the quantity, cost, or value."
+                    ]
+                }
+            },
+            { 
+                simple: "TRY", 
+                ambitious: "Endeavour", 
+                synonymDistractors: ["Relax", "Give up", "Postpone"],
+                definition: {
+                    correct: "To try hard to achieve a specific goal; a serious, focused attempt.",
+                    distractors: [
+                        "To rest, become less active, or take it easy for a period of time.",
+                        "To stop trying to achieve something, often due to difficulty or failure.",
+                        "To put off or delay an event until a later time or date."
+                    ]
+                }
+            },
+            { 
+                simple: "NEED", 
+                ambitious: "Require", 
+                synonymDistractors: ["Refuse", "Offer", "Optional"],
+                definition: {
+                    correct: "To depend on something; to need something for a specific, vital purpose.",
+                    distractors: [
+                        "To decline or express an unwillingness to do, accept, or allow something.",
+                        "To present something, such as a product or idea, for consideration or acceptance.",
+                        "Something that is not mandatory; voluntary or left to personal choice."
+                    ]
+                }
+            },
+            { 
+                simple: "NEW", 
+                ambitious: "Innovative", 
+                synonymDistractors: ["Common", "Stale", "Normal"],
+                definition: {
+                    correct: "Introducing new ideas, methods, or ways of doing things; original.",
+                    distractors: [
+                        "Occurring often or found in many places; ordinary or very familiar.",
+                        "Having lost its freshness or novelty; boring due to overuse or age.",
+                        "Conforming to a usual or expected standard; typical or regular."
+                    ]
+                }
+            },
+            { 
+                simple: "OLD", 
+                ambitious: "Archaic", 
+                synonymDistractors: ["Modern", "Recent", "Future"],
+                definition: {
+                    correct: "Very old or old-fashioned; out of date and no longer relevant or useful.",
+                    distractors: [
+                        "Relating to the present or recent times; technologically advanced.",
+                        "Having happened or taken place only a short time before now.",
+                        "Relating to a period of time that is yet to come or happen."
+                    ]
+                }
+            },
+            { 
+                simple: "START", 
+                ambitious: "Commence", 
+                synonymDistractors: ["Pause", "Finish", "Delay"],
+                definition: {
+                    correct: "To begin or start something; to initiate an action or event.",
+                    distractors: [
+                        "To stop an action or motion briefly and temporarily.",
+                        "To complete or bring an activity or process to a definitive end.",
+                        "To put off an action until a later time; to postpone or adjourn."
+                    ]
+                }
+            },
+            { 
+                simple: "END", 
+                ambitious: "Terminate", 
+                synonymDistractors: ["Initiate", "Prolong", "Expand"],
+                definition: {
+                    correct: "To bring something to an end or a definitive close; to stop entirely.",
+                    distractors: [
+                        "To start or set in motion; to introduce a process or system.",
+                        "To extend the duration or spatial coverage of something; to prolong.",
+                        "To make something larger or more extensive in size or scope."
+                    ]
+                }
+            },
+            { 
+                simple: "KEEP", 
+                ambitious: "Retain", 
+                synonymDistractors: ["Release", "Misplace", "Discard"],
+                definition: {
+                    correct: "To continue to have or keep possession of; to hold onto something.",
+                    distractors: [
+                        "To allow something to move or be set free from confinement.",
+                        "To put something in the wrong place and be unable to find it again.",
+                        "To throw away something because it is no longer wanted or needed."
+                    ]
+                }
+            },
+            { 
+                simple: "ALLOW", 
+                ambitious: "Permit", 
+                synonymDistractors: ["Forbid", "Prevent", "Restrict"],
+                definition: {
+                    correct: "To give permission for something to happen or for an action to be done.",
+                    distractors: [
+                        "To order someone not to do something; to ban or prohibit.",
+                        "To stop something from happening or make it impossible.",
+                        "To limit or control the size, extent, or amount of something."
+                    ]
+                }
+            },
+            { 
+                simple: "PLAN", 
+                ambitious: "Strategize", 
+                synonymDistractors: ["Wander", "React", "Improvise"],
+                definition: {
+                    correct: "To form a careful, often complex, plan of action for a long-term goal.",
+                    distractors: [
+                        "To move aimlessly from place to place without a fixed plan.",
+                        "To respond to an event after it has happened, without forethought.",
+                        "To create or perform something spontaneously without preparation."
+                    ]
+                }
+            },
+            { 
+                simple: "CLEAR", 
+                ambitious: "Transparent", 
+                synonymDistractors: ["Opaque", "Vague", "Complicated"],
+                definition: {
+                    correct: "Easy to see through or understand; obvious and without deceit.",
+                    distractors: [
+                        "Not able to be seen through; cloudy, non-reflective, or obscure.",
+                        "Unclear in meaning or expression; not specific or easily defined.",
+                        "Involving many different, intricate parts; difficult to analyze."
+                    ]
+                }
+            },
+            { 
+                simple: "HARD", 
+                ambitious: "Rigorous", 
+                synonymDistractors: ["Lenient", "Simple", "Casual"],
+                definition: {
+                    correct: "Extremely thorough, careful, and precise; strict and demanding.",
+                    distractors: [
+                        "More tolerant or permissive than expected; not strict or severe.",
+                        "Easily understood or done; presenting little or no difficulty.",
+                        "Involving many different, intricate parts; difficult to analyze." // Changed 'Casual' distractor to 'Involving many different, intricate parts; difficult to analyze.' to be more balanced.
+                    ]
+                }
+            },
+            { 
+                simple: "EASY", 
+                ambitious: "Effortless", 
+                synonymDistractors: ["Strenuous", "Difficult", "Painful"],
+                definition: {
+                    correct: "Requiring little or no physical or mental effort; simple and smooth.",
+                    distractors: [
+                        "Requiring great physical effort, energy, or exertion.",
+                        "Hard to do or achieve; requiring significant effort or skill.",
+                        "Causing physical or mental suffering or distress."
+                    ]
+                }
+            },
+            { 
+                simple: "STRONG", 
+                ambitious: "Robust", 
+                synonymDistractors: ["Flimsy", "Dull", "Gentle"],
+                definition: {
+                    correct: "Strong and healthy; unlikely to fail or weaken; sturdy and reliable.",
+                    distractors: [
+                        "Light and easily broken; not strong or durable; delicate.",
+                        "Lacking excitement, brightness, or sharpness; boring or subdued.",
+                        "Mild, soft, or tender; not harsh or severe in effect."
+                    ]
+                }
+            },
+            { 
+                simple: "WEAK", 
+                ambitious: "Fragile", 
+                synonymDistractors: ["Solid", "Tough", "Durable"],
+                definition: {
+                    correct: "Easily broken or damaged; delicate, weak, or brittle.",
+                    distractors: [
+                        "Firm and stable in shape; not easily moved or broken; dense.",
+                        "Strong enough to endure difficult conditions or wear; resilient.",
+                        "Able to last a long time without wearing out; long-lasting."
+                    ]
+                }
+            },
+            { 
+                simple: "FULL", 
+                ambitious: "Saturated", 
+                synonymDistractors: ["Dry", "Minor", "Limited"],
+                definition: {
+                    correct: "Holding as much moisture or liquid as possible; completely filled or soaked.",
+                    distractors: [
+                        "Free from moisture or liquid; not wet or damp.",
+                        "Small in importance or extent; secondary or insignificant.",
+                        "Restricted in size, amount, or extent; narrowly controlled."
+                    ]
+                }
+            },
+            { 
+                simple: "EMPTY", 
+                ambitious: "Void", 
+                synonymDistractors: ["Crowded", "Abundant", "Packed"],
+                definition: {
+                    correct: "Completely empty; having no substance, legal effect, or contents.",
+                    distractors: [
+                        "Containing many people or things; densely occupied.",
+                        "Existing in large quantities; plentiful or more than sufficient.",
+                        "Full of people or things pressed closely together; crammed."
+                    ]
+                }
+            },
+            { 
+                simple: "FAST", 
+                ambitious: "Accelerate", 
+                synonymDistractors: ["Halt", "Reverse", "Wait"],
+                definition: {
+                    correct: "To increase speed or to happen more quickly; to gain momentum.",
+                    distractors: [
+                        "To stop suddenly, often due to an abrupt application of brakes.",
+                        "To move backward in direction or order; to undo a process.",
+                        "To stay in one place until a specific event or time occurs."
+                    ]
+                }
+            },
+            { 
+                simple: "SLOW", 
+                ambitious: "Tepid", 
+                synonymDistractors: ["Boiling", "Rapid", "Frozen"],
+                definition: {
+                    correct: "Slightly warm; lukewarm, or showing little enthusiasm or excitement.",
+                    distractors: [
+                        "The point at which a liquid turns to vapor; extremely hot.",
+                        "Happening or moving with great speed or swiftness.",
+                        "Turned into ice or solidified by cold; extremely cold."
+                    ]
+                }
+            },
+            { 
+                simple: "MAKE UP", 
+                ambitious: "Fabricate", 
+                synonymDistractors: ["Confirm", "Prove", "Reveal"],
+                definition: {
+                    correct: "To invent or make up something, usually a lie or false story; to forge.",
+                    distractors: [
+                        "To establish the truth or correctness of something; to verify.",
+                        "To show the existence, truth, or validity of something clearly.",
+                        "To make unknown or secret information known to others; to disclose."
+                    ]
+                }
+            },
+            { 
+                simple: "HIDE", 
+                ambitious: "Conceal", 
+                synonymDistractors: ["Expose", "Display", "Unveil"],
+                definition: {
+                    correct: "To keep something from being seen or known; to hide or cover up.",
+                    distractors: [
+                        "To leave something without shelter or protection; to make visible.",
+                        "To put something in a prominent place for others to view.",
+                        "To show or introduce something new or previously secret for the first time."
+                    ]
+                }
+            },
+            { 
+                simple: "KNOW", 
+                ambitious: "Comprehend", 
+                synonymDistractors: ["Misjudge", "Assume", "Dismiss"],
+                definition: {
+                    correct: "To grasp mentally; to understand fully the nature or meaning of something.",
+                    distractors: [
+                        "To form a wrong opinion or incorrect judgment about something.",
+                        "To take something for granted as true without proof; to suppose.",
+                        "To treat something as unworthy of consideration; to disregard."
+                    ]
+                }
+            },
+            { 
+                simple: "ANSWER", 
+                ambitious: "Respond", 
+                synonymDistractors: ["Ask", "Ignore", "Question"],
+                definition: {
+                    correct: "To say or do something in reply or reaction to someone or something.",
+                    distractors: [
+                        "To put a question to someone, seeking information or an answer.",
+                        "To refuse to take notice of or pay attention to someone or something.",
+                        "To try to find the solution to a problem or task by investigation."
+                    ]
+                }
+            },
+            { 
+                simple: "ASK", 
+                ambitious: "Inquire", 
+                synonymDistractors: ["Reply", "State", "Insist"],
+                definition: {
+                    correct: "To ask for information from someone; to investigate or seek facts.",
+                    distractors: [
+                        "To say or write something in return; to give a verbal or written answer.",
+                        "To refuse to take notice of or pay attention to someone or something.",
+                        "To try to find the solution to a problem or task by investigation."
+                    ]
+                }
+            },
+            { 
+                simple: "HELP", 
+                ambitious: "Assist", 
+                synonymDistractors: ["Hinder", "Oppose", "Prevent"],
+                definition: {
+                    correct: "To give support or help; to make it easier for someone to do something.",
+                    distractors: [
+                        "To create difficulties for someone or something; to obstruct or impede.",
+                        "To disagree with or argue strongly against an idea or action.",
+                        "To stop something from happening or someone from doing an action."
+                    ]
+                }
+            },
+            { 
+                simple: "TELL", 
+                ambitious: "Narrate", 
+                synonymDistractors: ["Conceal", "Predict", "Mutter"],
+                definition: {
+                    correct: "To give a spoken or written account of something; to tell a story.",
+                    distractors: [
+                        "To keep information secret or hidden from other people.",
+                        "To say what will happen in the future; to forecast an event.",
+                        "To say something in a low, soft, or unclear voice; to murmur."
+                    ]
+                }
+            },
+            { 
+                simple: "CHANGE", 
+                ambitious: "Modify", 
+                synonymDistractors: ["Fix", "Stabilize", "Preserve"],
+                definition: {
+                    correct: "To make partial or minor changes to something; to alter or adjust.",
+                    distractors: [
+                        "To repair something that is broken or damaged; to mend or restore.",
+                        "To make something unlikely to change or fail; to secure or steady.",
+                        "To maintain something in its original state; to keep safe."
+                    ]
+                }
+            },
+            { 
+                simple: "NICE", 
+                ambitious: "Benevolent", 
+                synonymDistractors: ["Harsh", "Cruel", "Apathetic"],
+                definition: {
+                    correct: "Well meaning and kind; focused on doing good for others; charitable.",
+                    distractors: [
+                        "Severe, rough, or unpleasant; showing a lack of sensitivity.",
+                        "Willfully causing pain or suffering to others; merciless.",
+                        "Showing no interest, enthusiasm, or concern; indifferent."
+                    ]
+                }
+            },
+            { 
+                simple: "TRUE", 
+                ambitious: "Authentic", 
+                synonymDistractors: ["Fake", "Dubious", "Fabricated"],
+                definition: {
+                    correct: "Of undisputed origin; genuine, real, or reliable.",
+                    distractors: [
+                        "Not real; imitation or manufactured to resemble the original.",
+                        "Hesitating or doubting; not to be relied upon; suspect.",
+                        "Invented or made up, typically to deceive; fictional."
+                    ]
+                }
+            },
+            { 
+                simple: "STOP", 
+                ambitious: "Cease", 
+                synonymDistractors: ["Continue", "Begin", "Extend"],
+                definition: {
+                    correct: "To stop happening or existing; to bring or come to a definitive end.",
+                    distractors: [
+                        "To keep on or persist in an activity; to carry on without interruption.",
+                        "To start an activity or event; to initiate a process.",
+                        "To stretch or spread out to a greater distance; to draw out."
+                    ]
+                }
+            },
+            { 
+                simple: "GO OUT", 
+                ambitious: "Emerge", 
+                synonymDistractors: ["Submerge", "Recede", "Enter"],
+                definition: {
+                    correct: "To come out into view from a hidden or confined space; to appear.",
+                    distractors: [
+                        "To sink or dive below the surface of water; to drown.",
+                        "To go or move back or further away from a previous position.",
+                        "To move into a place or thing; to gain admission."
+                    ]
+                }
+            },
+            { 
+                simple: "FIGHT", 
+                ambitious: "Contend", 
+                synonymDistractors: ["Agree", "Surrender", "Yield"],
+                definition: {
+                    correct: "To struggle to overcome a rival or difficulty; to compete or assert a position.",
+                    distractors: [
+                        "To have the same opinion as someone else; to be in harmony.",
+                        "To cease resistance to an enemy or authority; to submit.",
+                        "To give way to arguments, pressure, or superior force."
+                    ]
+                }
+            },
+            { 
+                simple: "TAKE", 
+                ambitious: "Seize", 
+                synonymDistractors: ["Release", "Give", "Offer"],
+                definition: {
+                    correct: "To take hold of suddenly and forcibly; to grab something quickly.",
+                    distractors: [
+                        "To allow something to move or be set free from confinement.",
+                        "To transfer the possession of something to someone else; to hand over.",
+                        "To present something for someone to accept or reject; to propose."
+                    ]
+                }
+            },
+            { 
+                simple: "GIVE", 
+                ambitious: "Allocate", 
+                synonymDistractors: ["Withhold", "Claim", "Deny"],
+                definition: {
+                    correct: "To distribute resources or duties for a particular purpose; to assign.",
+                    distractors: [
+                        "To refuse to give something that is due or desired; to retain.",
+                        "To formally request or demand something as one's right.",
+                        "To refuse to grant something requested; to reject an appeal."
+                    ]
+                }
+            },
+            { 
+                simple: "FUN", 
+                ambitious: "Jocular", 
+                synonymDistractors: ["Serious", "Solemn", "Dull"],
+                definition: {
+                    correct: "Fond of joking; cheerful, humorous, and playful in mood or nature.",
+                    distractors: [
+                        "Acting or speaking sincerely, not joking; grave or earnest.",
+                        "Formal and dignified; not cheerful or smiling; serious in manner.",
+                        "Lacking interest or excitement; tedious or monotonous."
+                    ]
+                }
+            },
+            { 
+                simple: "FEEL", 
+                ambitious: "Perceive", 
+                synonymDistractors: ["Ignore", "Blind", "Overlook"],
+                definition: {
+                    correct: "To become aware or conscious of something; to notice or observe.",
+                    distractors: [
+                        "To refuse to take notice of; to disregard or overlook deliberately.",
+                        "Unable to see due to a visual impairment or lack of sight.",
+                        "To fail to notice or consider something; to miss an opportunity."
+                    ]
+                }
+            },
+            { 
+                simple: "CLEARLY", 
+                ambitious: "Evidently", 
+                synonymDistractors: ["Hiddenly", "Vaguely", "Improbably"],
+                definition: {
+                    correct: "In a way that is clearly seen or understood; obviously or plainly.",
+                    distractors: [
+                        "In a manner that is kept secret or not revealed to others.",
+                        "In a way that is uncertain or unclear; lacking precision.",
+                        "Not likely to happen or be true; implausibly or unconvincingly."
+                    ]
+                }
+            }
+        ];
+        
+        // --- TRANSITION SPEED CONSTANT ---
+        const TRANSITION_DELAY = 1000; // Reduced to 1 second
+
+        // --- FIREBASE AND DATA FUNCTIONS ---
+
+        async function initializeFirebase() {
+            const loadingIndicator = document.getElementById('loading-indicator');
+            
+            // Check if firebaseConfig contains actual keys (i.e., not just {})
+            const isConfigValid = Object.keys(firebaseConfig).length > 0 && firebaseConfig.apiKey;
+
+            if (!isConfigValid) {
+                console.warn("Running in local/offline mode. High scores will not save.");
+                loadingIndicator.textContent = "High Score saving disabled (Offline Mode). Loading Game...";
+                userId = crypto.randomUUID();
+                document.getElementById('user-id-display').textContent = `User ID: ${userId} (Local)`;
+                // Directly start the game since no database wait is needed
+                loadingIndicator.classList.add('hidden');
+                startGame();
+                return;
+            }
+
+            // --- Database Initialization (Only runs if config is valid) ---
+            try {
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    userId = user ? user.uid : crypto.randomUUID();
+                    document.getElementById('user-id-display').textContent = `User ID: ${userId}`;
+                    loadHighScore();
+                    loadingIndicator.classList.add('hidden');
+                    startGame(); // Start game once auth is ready and high score is loaded
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization or auth failed:", error);
+                loadingIndicator.textContent = "Error loading High Score feature. Game will run in Local Mode.";
+                // Fallback to local mode on failure
+                db = null;
+                auth = null;
+                userId = crypto.randomUUID();
+                loadingIndicator.classList.add('hidden');
+                startGame();
+            }
+        }
+
+        async function loadHighScore() {
+            if (!db || !userId) {
+                document.getElementById('high-score-display').textContent = 'N/A';
+                return;
+            }
+            const docRef = doc(db, "artifacts", appId, "users", userId, "game_data", "vocab_vault");
+            try {
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    currentHighScore = docSnap.data().highScore || 0;
+                } else {
+                    currentHighScore = 0;
+                    // Initialize document if it doesn't exist
+                    await setDoc(docRef, { highScore: 0, lastUpdated: new Date() });
+                }
+                document.getElementById('high-score-display').textContent = currentHighScore;
+            } catch (error) {
+                console.error("Error loading high score:", error);
+                document.getElementById('high-score-display').textContent = "N/A (Error)";
+            }
+        }
+
+        async function saveHighScore(newScore) {
+            if (!db || !userId || newScore <= currentHighScore) return;
+            
+            currentHighScore = newScore;
+            document.getElementById('high-score-display').textContent = currentHighScore;
+            
+            const docRef = doc(db, "artifacts", appId, "users", userId, "game_data", "vocab_vault");
+            try {
+                await setDoc(docRef, { highScore: newScore, lastUpdated: new Date() }, { merge: true });
+                console.log("High score saved:", newScore);
+            } catch (error) {
+                console.error("Error saving high score:", error);
+            }
+        }
+
+        // --- GAME LOGIC FUNCTIONS ---
+
+        function updateUI() {
+            document.getElementById('score-display').textContent = score;
+            document.getElementById('lives-display').textContent = lives;
+        }
+
+        function loadSynonymQuestion() {
+            if (availableWords.length === 0) {
+                // Reset available words if the pool is exhausted
+                availableWords = [...vocabulary];
+                shuffleArray(availableWords); // Shuffle when resetting
+            }
+
+            // Pick a random question and remove it from the available pool
+            const randomIndex = Math.floor(Math.random() * availableWords.length);
+            currentQuestion = availableWords[randomIndex];
+            availableWords.splice(randomIndex, 1);
+            
+            currentStage = 'synonym';
+            
+            document.getElementById('prompt-stage-1').classList.remove('hidden');
+            document.getElementById('prompt-stage-2').classList.add('hidden');
+            document.getElementById('current-word-display').textContent = currentQuestion.simple;
+            
+            const optionsGrid = document.getElementById('options-grid');
+            // Ensure 2-column layout for synonyms
+            optionsGrid.classList.remove('md:grid-cols-1');
+            optionsGrid.classList.add('md:grid-cols-2');
+
+
+            const options = [currentQuestion.ambitious, ...currentQuestion.synonymDistractors.slice(0, 3)];
+            shuffleArray(options); // <-- Guarantees random order for options
+
+            optionsGrid.innerHTML = '';
+            optionsGrid.classList.remove('hidden');
+
+            options.forEach(option => {
+                const button = document.createElement('button');
+                button.textContent = option;
+                button.className = 'option-button bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md focus:outline-none focus:ring-4 focus:ring-blue-300 transition-all duration-200';
+                // Use a single checkAnswer function, passing the stage
+                button.onclick = () => checkAnswer(option, button, 'synonym'); 
+                optionsGrid.appendChild(button);
+            });
+
+            document.getElementById('message-box').classList.add('hidden');
+            document.getElementById('restart-button').classList.add('hidden');
+        }
+
+        function loadDefinitionQuestion() {
+            currentStage = 'definition';
+
+            document.getElementById('prompt-stage-1').classList.add('hidden');
+            document.getElementById('prompt-stage-2').classList.remove('hidden');
+            document.getElementById('current-word-display').textContent = currentQuestion.ambitious;
+            
+            const optionsGrid = document.getElementById('options-grid');
+            // Ensure 1-column layout for definitions
+            optionsGrid.classList.remove('md:grid-cols-2');
+            optionsGrid.classList.add('md:grid-cols-1');
+
+
+            const options = [currentQuestion.definition.correct, ...currentQuestion.definition.distractors.slice(0, 3)];
+            shuffleArray(options); // <-- Guarantees random order for options
+
+            optionsGrid.innerHTML = '';
+
+            options.forEach(option => {
+                const button = document.createElement('button');
+                button.textContent = option;
+                // Definition buttons are styled slightly differently to accommodate longer text
+                button.className = 'option-button bg-purple-500 hover:bg-purple-600 text-white text-base font-medium py-3 px-4 rounded-lg shadow-md focus:outline-none focus:ring-4 focus:ring-purple-300 transition-all duration-200';
+                button.onclick = () => checkAnswer(option, button, 'definition');
+                optionsGrid.appendChild(button);
+            });
+        }
+
+        function checkAnswer(selectedOption, clickedButton, stage) {
+            if (!gameActive) return;
+
+            const messageBox = document.getElementById('message-box');
+            const buttons = document.querySelectorAll('.option-button');
+
+            // Disable all buttons to prevent double-clicking
+            buttons.forEach(btn => {
+                btn.onclick = null;
+                btn.classList.add('disabled-button');
+            });
+
+            let isCorrect = false;
+            let feedbackMessage = "";
+
+            if (stage === 'synonym') {
+                isCorrect = selectedOption === currentQuestion.ambitious;
+                if (isCorrect) {
+                    score++;
+                    clickedButton.classList.add('correct-answer');
+                    feedbackMessage = "Correct Synonym! Now, find its definition. (+1 Point)";
+                    messageBox.className = 'min-h-[50px] text-center p-2 rounded-lg font-bold text-lg mb-4 bg-green-100 text-green-700';
+                    updateUI();
+                    messageBox.textContent = feedbackMessage;
+                    messageBox.classList.remove('hidden');
+                    // FAST TRANSITION: 1000ms
+                    setTimeout(loadDefinitionQuestion, TRANSITION_DELAY);
+                    return; // Stop here, move to next stage
+                } else {
+                    // Incorrect synonym - skip definition stage
+                    lives--;
+                    clickedButton.classList.add('incorrect-answer');
+
+                    // Highlight the correct synonym
+                    const correctAnswerText = currentQuestion.ambitious;
+                    buttons.forEach(btn => {
+                        if (btn.textContent === correctAnswerText) {
+                            btn.classList.add('correct-answer');
+                        }
+                    });
+
+                    feedbackMessage = `Incorrect Synonym. It was "${currentQuestion.ambitious}". (-1 Life)`;
+                    messageBox.className = 'min-h-[50px] text-center p-2 rounded-lg font-bold text-lg mb-4 bg-red-100 text-red-700';
+                    
+                    // Proceed to game over or next synonym question
+                }
+            } else if (stage === 'definition') {
+                isCorrect = selectedOption === currentQuestion.definition.correct;
+                if (isCorrect) {
+                    score++;
+                    clickedButton.classList.add('correct-answer');
+                    feedbackMessage = "Correct Definition! You mastered that word! (+1 Point)";
+                    messageBox.className = 'min-h-[50px] text-center p-2 rounded-lg font-bold text-lg mb-4 bg-green-100 text-green-700';
+                    
+                } else {
+                    lives--;
+                    clickedButton.classList.add('incorrect-answer');
+                    
+                    // Highlight the correct definition
+                    const correctAnswerText = currentQuestion.definition.correct;
+                    buttons.forEach(btn => {
+                        if (btn.textContent === correctAnswerText) {
+                            btn.classList.add('correct-answer');
+                        }
+                    });
+
+                    feedbackMessage = `Incorrect Definition. The correct meaning was shown. (-1 Life)`;
+                    messageBox.className = 'min-h-[50px] text-center p-2 rounded-lg font-bold text-lg mb-4 bg-red-100 text-red-700';
+                }
+            }
+
+            // Common logic for end of a full word cycle (whether synonym was wrong, or definition was done)
+            updateUI();
+            messageBox.textContent = feedbackMessage;
+            messageBox.classList.remove('hidden');
+
+            if (lives <= 0) {
+                gameOver();
+            } else {
+                // Load next word (Synonym stage)
+                // FAST TRANSITION: 1000ms
+                setTimeout(loadSynonymQuestion, TRANSITION_DELAY);
+            }
+        }
+
+        function gameOver() {
+            gameActive = false;
+            document.getElementById('options-grid').classList.add('hidden');
+            
+            const messageBox = document.getElementById('message-box');
+            messageBox.className = 'min-h-[50px] text-center p-4 rounded-lg font-bold text-2xl mb-4 bg-yellow-100 text-yellow-700';
+            
+            let gameOverMessage = `GAME OVER. You scored ${score} points!`;
+            
+            saveHighScore(score); // Attempt to save high score
+
+            if (score > currentHighScore) {
+                gameOverMessage += ` (NEW HIGH SCORE!)`;
+            } else if (score === currentHighScore && currentHighScore > 0) {
+                 gameOverMessage += ` (Tied High Score!)`;
+            } else {
+                 gameOverMessage += ` (High Score: ${currentHighScore || 'N/A'})`;
+            }
+
+            messageBox.textContent = gameOverMessage;
+            messageBox.classList.remove('hidden');
+
+            document.getElementById('restart-button').classList.remove('hidden');
+        }
+
+        function startGame() {
+            score = 0;
+            lives = 3;
+            gameActive = true;
+            availableWords = [...vocabulary]; // Reset the word pool
+            shuffleArray(availableWords); // Shuffle words at the start
+            updateUI();
+            document.getElementById('restart-button').classList.add('hidden');
+            loadSynonymQuestion();
+        }
+
+        // Initialize everything on window load
+        window.onload = initializeFirebase;
+    </script>
+</body>
+</html>
